@@ -199,6 +199,11 @@ The server, reserved port, Node, NodeClaim, and launch journal disappeared.
 All 42 original nodes retained their UIDs and remained Ready.
 This smoke did not cover persistent volumes, disk failure, or sustained load.
 
+The v0.1.5 storage smoke used `bareMetalStorage.ephemeralSizeGiB: 64` and `localVolumeName: local-data`.
+Talos created a 64 GiB `EPHEMERAL` partition and a separate 378.6 GiB user partition on the same boot disk.
+A pod wrote 1 MiB through `/var/mnt/local-data`. A replacement pod read the same file with the same SHA-256 hash.
+This check covered hostPath persistence across pod replacement, not PVC provisioning or server replacement.
+
 ## Operational boundaries
 
 - The flavor catalog and prices are explicit configuration. The provider does not import billing prices or GPU resources.
