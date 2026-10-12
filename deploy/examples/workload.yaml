@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: capacity-smoke
+  namespace: karpenter-smoke
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: capacity-smoke
+  template:
+    metadata:
+      labels:
+        app: capacity-smoke
+    spec:
+      nodeSelector:
+        workload: karpenter-smoke
+      tolerations:
+      - key: karpenter-smoke
+        operator: Exists
+        effect: NoSchedule
+      containers:
+      - name: check
+        image: busybox:1.37.0
+        command:
+        - sleep
+        - '3600'
+        resources:
+          requests:
+            cpu: '3'
+            memory: 128Mi
+          limits:
+            cpu: '3'
+            memory: 128Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault

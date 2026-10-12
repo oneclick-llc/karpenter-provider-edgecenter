@@ -1,0 +1,153 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: edgecenternodeclasses.karpenter.edgecenter.ru
+spec:
+  group: karpenter.edgecenter.ru
+  scope: Cluster
+  names:
+    kind: EdgeCenterNodeClass
+    plural: edgecenternodeclasses
+    singular: edgecenternodeclass
+    shortNames:
+    - ecnc
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            properties:
+              clusterID: &id001
+                type: string
+                minLength: 1
+              projectID:
+                type: integer
+                minimum: 1
+              regionID:
+                type: integer
+                minimum: 1
+              region: *id001
+              networkID: *id001
+              imageID: *id001
+              serverGroupID: *id001
+              securityGroupIDs:
+                type: array
+                minItems: 1
+                items: *id001
+              flavors:
+                type: array
+                minItems: 1
+                items:
+                  type: object
+                  properties:
+                    name: *id001
+                    cpu:
+                      type: integer
+                      minimum: 1
+                    memoryGiB:
+                      type: integer
+                      minimum: 1
+                    price:
+                      type: number
+                      minimum: 1.0e-06
+                  required:
+                  - name
+                  - cpu
+                  - memoryGiB
+                  - price
+              bootSizeGiB:
+                type: integer
+                minimum: 10
+              bootType:
+                type: string
+                enum:
+                - standard
+                - ssd_hiiops
+                - cold
+                - ultra
+              addresses:
+                type: object
+                properties:
+                  cidr: *id001
+                  hostOffset: &id002
+                    type: integer
+                  start:
+                    type: integer
+                    minimum: 0
+                  end:
+                    type: integer
+                    minimum: 0
+                  kubeSpanPortBase: *id002
+                required:
+                - cidr
+                - hostOffset
+                - start
+                - end
+                - kubeSpanPortBase
+              gateways:
+                type: array
+                minItems: 1
+                items:
+                  type: object
+                  properties:
+                    address: *id001
+                    user: *id001
+                    publicIP: *id001
+                  required:
+                  - address
+                  - user
+                  - publicIP
+              credentials: &id003
+                type: object
+                properties:
+                  name: *id001
+                required:
+                - name
+              talos: *id003
+              ssh: *id003
+            required:
+            - clusterID
+            - projectID
+            - regionID
+            - region
+            - networkID
+            - imageID
+            - securityGroupIDs
+            - flavors
+            - bootSizeGiB
+            - bootType
+            - addresses
+            - gateways
+            - credentials
+            - talos
+            - ssh
+            x-kubernetes-validations:
+            - rule: self.addresses.end >= self.addresses.start
+              message: The slot range must not be empty.
+            - rule: self.addresses.end - self.addresses.start <= 255
+              message: A NodeClass can have at most 256 slots.
+          status:
+            type: object
+            x-kubernetes-preserve-unknown-fields: true
+        required:
+        - spec
+    additionalPrinterColumns:
+    - name: Region
+      type: string
+      jsonPath: .spec.region
+    - name: Ready
+      type: string
+      jsonPath: .status.conditions[?(@.type=="Ready")].status

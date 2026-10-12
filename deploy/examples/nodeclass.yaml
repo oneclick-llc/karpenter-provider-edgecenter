@@ -1,0 +1,39 @@
+apiVersion: karpenter.edgecenter.ru/v1alpha1
+kind: EdgeCenterNodeClass
+metadata:
+  name: example-region
+spec:
+  clusterID: example-cluster
+  projectID: 12345
+  regionID: 10
+  region: example-region
+  networkID: REPLACE_NETWORK_UUID
+  imageID: REPLACE_TALOS_IMAGE_UUID
+  securityGroupIDs:
+  - REPLACE_SECURITY_GROUP_UUID
+  flavors:
+  - name: g2-standard-4-16
+    cpu: 4
+    memoryGiB: 16
+    price: 1
+  bootSizeGiB: 64
+  bootType: standard
+  addresses:
+    cidr: 10.64.0.0/18
+    hostOffset: 266
+    start: 16
+    end: 17
+    kubeSpanPortBase: 52110
+  gateways:
+  - address: 192.0.2.10:22
+    user: ops
+    publicIP: 192.0.2.10
+  - address: 192.0.2.11:22
+    user: ops
+    publicIP: 192.0.2.11
+  credentials:
+    name: edgecenter-api
+  talos:
+    name: talos-worker
+  ssh:
+    name: talos-gateway

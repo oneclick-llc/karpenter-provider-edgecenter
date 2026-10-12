@@ -1,0 +1,282 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: karpenter-edgecenter
+  namespace: karpenter-edgecenter
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: karpenter-edgecenter
+rules:
+- apiGroups:
+  - ''
+  resources:
+  - pods
+  - nodes
+  - persistentvolumeclaims
+  - persistentvolumes
+  - replicationcontrollers
+  - namespaces
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ''
+  resources:
+  - nodes
+  - nodes/status
+  - pods
+  verbs:
+  - patch
+  - update
+  - delete
+- apiGroups:
+  - ''
+  resources:
+  - pods/eviction
+  verbs:
+  - create
+- apiGroups:
+  - ''
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - apps
+  resources:
+  - daemonsets
+  - deployments
+  - replicasets
+  - statefulsets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - policy
+  resources:
+  - poddisruptionbudgets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - storage.k8s.io
+  resources:
+  - storageclasses
+  - csinodes
+  - volumeattachments
+  - csidrivers
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - resource.k8s.io
+  resources:
+  - resourceslices
+  - resourceclaims
+  - resourceclaimtemplates
+  - deviceclasses
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - karpenter.sh
+  resources:
+  - nodepools
+  - nodepools/status
+  - nodepools/scale
+  - nodeclaims
+  - nodeclaims/status
+  - nodeclaims/finalizers
+  - nodeoverlays
+  - nodeoverlays/status
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - autoscaling.x-k8s.io
+  resources:
+  - capacitybuffers
+  - capacitybuffers/status
+  - verticalpodautoscalers
+  verbs:
+  - get
+  - list
+  - watch
+  - patch
+  - update
+- apiGroups:
+  - karpenter.edgecenter.ru
+  resources:
+  - edgecenternodeclasses
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - karpenter.edgecenter.ru
+  resources:
+  - edgecenternodeclasses/status
+  verbs:
+  - get
+  - patch
+  - update
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: karpenter-edgecenter
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: karpenter-edgecenter
+subjects:
+- kind: ServiceAccount
+  name: karpenter-edgecenter
+  namespace: karpenter-edgecenter
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: karpenter-edgecenter
+  namespace: karpenter-edgecenter
+rules:
+- apiGroups:
+  - ''
+  resources:
+  - secrets
+  verbs:
+  - get
+- apiGroups:
+  - ''
+  resources:
+  - configmaps
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: karpenter-edgecenter
+  namespace: karpenter-edgecenter
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: karpenter-edgecenter
+subjects:
+- kind: ServiceAccount
+  name: karpenter-edgecenter
+  namespace: karpenter-edgecenter
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: karpenter-edgecenter
+  namespace: karpenter-edgecenter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: karpenter-edgecenter
+  template:
+    metadata:
+      labels:
+        app: karpenter-edgecenter
+    spec:
+      serviceAccountName: karpenter-edgecenter
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: karpenter.sh/nodepool
+                operator: DoesNotExist
+      containers:
+      - name: controller
+        image: ghcr.io/oneclick-llc/karpenter-provider-edgecenter:v0.1.0
+        args: []
+        env:
+        - name: SYSTEM_NAMESPACE
+          value: karpenter-edgecenter
+        - name: EC_CLUSTER_ID
+          value: example-cluster
+        - name: LEADER_ELECTION_NAMESPACE
+          value: karpenter-edgecenter
+        - name: FEATURE_GATES
+          value: StaticCapacity=true
+        ports:
+        - name: metrics
+          containerPort: 8080
+        - name: health
+          containerPort: 8081
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: health
+          initialDelaySeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: health
+          initialDelaySeconds: 10
+        resources:
+          requests:
+            cpu: 200m
+            memory: 256Mi
+          limits:
+            memory: 1Gi
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: tmp
+        emptyDir: {}

@@ -1,0 +1,34 @@
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: ec-smoke
+spec:
+  template:
+    metadata:
+      labels:
+        workload: karpenter-smoke
+    spec:
+      nodeClassRef:
+        group: karpenter.edgecenter.ru
+        kind: EdgeCenterNodeClass
+        name: example-region
+      taints:
+      - key: karpenter-smoke
+        effect: NoSchedule
+      expireAfter: Never
+      requirements:
+      - key: node.kubernetes.io/instance-type
+        operator: In
+        values:
+        - g2-standard-4-16
+      startupTaints:
+      - key: node.cilium.io/agent-not-ready
+        effect: NoSchedule
+  limits:
+    cpu: '8'
+    memory: 32Gi
+  disruption:
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: 30s
+    budgets:
+    - nodes: '1'
