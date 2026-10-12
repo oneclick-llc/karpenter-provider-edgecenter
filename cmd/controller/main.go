@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"time"
 
 	api "github.com/oneclick-llc/karpenter-provider-edgecenter/pkg/apis/v1alpha1"
 	"github.com/oneclick-llc/karpenter-provider-edgecenter/pkg/provider"
@@ -9,6 +10,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider/metrics"
 	"sigs.k8s.io/karpenter/pkg/controllers"
+	"sigs.k8s.io/karpenter/pkg/controllers/nodeclaim/lifecycle"
 	"sigs.k8s.io/karpenter/pkg/controllers/state"
 	"sigs.k8s.io/karpenter/pkg/operator"
 )
@@ -22,6 +24,8 @@ func main() {
 	if namespace == "" || cluster == "" {
 		panic("SYSTEM_NAMESPACE and EC_CLUSTER_ID are required")
 	}
+	// Bare-metal imaging can exceed the core five-minute launch timeout.
+	lifecycle.LaunchTimeout = 30 * time.Minute
 	ctx, op := operator.NewOperator()
 	direct, err := client.New(op.GetConfig(), client.Options{Scheme: op.GetScheme()})
 	if err != nil {

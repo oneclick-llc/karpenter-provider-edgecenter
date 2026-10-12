@@ -236,7 +236,7 @@ spec:
                 operator: Exists
       containers:
       - name: controller
-        image: ghcr.io/oneclick-llc/karpenter-provider-edgecenter:v0.1.3
+        image: ghcr.io/oneclick-llc/karpenter-provider-edgecenter:v0.1.4
         args: []
         env:
         - name: SYSTEM_NAMESPACE

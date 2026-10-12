@@ -109,6 +109,7 @@ It tolerates the control-plane scheduling taint. Worker pools can scale to zero 
 ## Bare metal
 
 Set `spec.computeType: BareMetal` to use the physical server API.
+The controller allows 30 minutes for a launch because physical server imaging can exceed the default five-minute timeout.
 The provider checks the regional hardware inventory before it selects a bare metal flavor.
 The image must have the EdgeCenter `is_baremetal` property. A VM image ID does not pass this check.
 
