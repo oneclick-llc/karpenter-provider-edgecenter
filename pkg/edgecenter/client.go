@@ -6,12 +6,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"golang.org/x/time/rate"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
-	"golang.org/x/time/rate"
 )
 
 var requestBudget = rate.NewLimiter(4, 1)
@@ -37,7 +37,9 @@ func (c *Client) Path(version, resource string) string {
 
 // Do never retries a mutation. The caller records its intent before submission.
 func (c *Client) Do(ctx context.Context, method, path string, body, out any) error {
-	if err := requestBudget.Wait(ctx); err != nil { return err }
+	if err := requestBudget.Wait(ctx); err != nil {
+		return err
+	}
 	var data []byte
 	var err error
 	if body != nil {

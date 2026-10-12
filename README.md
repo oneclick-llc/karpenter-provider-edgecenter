@@ -21,6 +21,7 @@ The module pins CEL to `v0.30.0`. The Talos module requests `v0.31.0`, but that 
 Each NodeClass defines one region, a flavor catalog, and an address range.
 Karpenter selects a flavor from that catalog. Prices use one consistent currency or relative cost unit across all NodeClasses.
 The example price is a placeholder. It is not a billing estimate.
+The provider reserves 50 millicores and 1 GiB of memory when it estimates node capacity.
 
 A ConfigMap records each launch in the operator namespace.
 Its name identifies the project, region, network, and private IP.
@@ -102,8 +103,8 @@ Terraform and Karpenter must use separate slot ranges.
    kubectl --context "$KUBE_CONTEXT" apply -f deploy/examples/dynamic.yaml
    ```
 
-The deployment requires a node without the `karpenter.sh/nodepool` label.
-This keeps the controller on the permanent cluster capacity.
+The deployment runs only on control-plane nodes.
+It tolerates the control-plane scheduling taint. Worker pools can scale to zero without removing the controller.
 
 ## Static pools
 
@@ -151,8 +152,8 @@ Check the fixed replica count separately with the static example.
 
 ```sh
 make build
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.2
+git push origin v0.1.2
 ```
 
 The tag workflow runs the smoke tests and vet. It publishes amd64 and arm64 controller images to GHCR.

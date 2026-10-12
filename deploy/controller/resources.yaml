@@ -232,11 +232,11 @@ spec:
           requiredDuringSchedulingIgnoredDuringExecution:
             nodeSelectorTerms:
             - matchExpressions:
-              - key: karpenter.sh/nodepool
-                operator: DoesNotExist
+              - key: node-role.kubernetes.io/control-plane
+                operator: Exists
       containers:
       - name: controller
-        image: ghcr.io/oneclick-llc/karpenter-provider-edgecenter:v0.1.0
+        image: ghcr.io/oneclick-llc/karpenter-provider-edgecenter:v0.1.2
         args: []
         env:
         - name: SYSTEM_NAMESPACE
@@ -280,3 +280,7 @@ spec:
       volumes:
       - name: tmp
         emptyDir: {}
+      tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule

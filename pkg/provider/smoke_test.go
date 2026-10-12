@@ -2,8 +2,8 @@ package provider
 
 import (
 	"context"
-	"encoding/json"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +14,7 @@ import (
 	"github.com/oneclick-llc/karpenter-provider-edgecenter/pkg/bootstrap"
 	ec "github.com/oneclick-llc/karpenter-provider-edgecenter/pkg/edgecenter"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -22,6 +23,15 @@ import (
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	cp "sigs.k8s.io/karpenter/pkg/cloudprovider"
 )
+
+func TestFitsRejectsTalosMemoryOvercommit(t *testing.T) {
+	it := instanceType(api.EdgeCenterNodeClassSpec{Region: "test", BootSizeGiB: 64}, api.Flavor{Name: "4-16", CPU: 4, MemoryGiB: 16, Price: 1})
+	nc := &v1.NodeClaim{}
+	nc.Spec.Resources.Requests = corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("15600Mi")}
+	if fits(it, nc) {
+		t.Fatal("flavor accepted memory that the Talos node cannot provide")
+	}
+}
 
 func TestLifecycleSmoke(t *testing.T) {
 	for _, mode := range []string{"SSHGateway", "UserData"} {
@@ -58,12 +68,18 @@ func lifecycleSmoke(t *testing.T, mode string) {
 			reply(map[string]any{"tasks": []string{"port-task"}})
 		case r.Method == "POST" && r.URL.Path == "/v2/instances/1/10":
 			var body map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil { t.Error(err) }
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Error(err)
+			}
 			if mode == "UserData" {
 				encoded, _ := body["user_data"].(string)
 				decoded, err := base64.StdEncoding.DecodeString(encoded)
-				if err != nil || !strings.Contains(string(decoded), "edgecenter://1/10/claim-1") || !strings.Contains(string(decoded), "karpenter.sh/unregistered") { t.Error("user data lacks the stable provider ID or registration taint") }
-			} else if _, ok := body["user_data"]; ok { t.Error("SSHGateway unexpectedly sent user data") }
+				if err != nil || !strings.Contains(string(decoded), "edgecenter://1/10/claim-1") || !strings.Contains(string(decoded), "karpenter.sh/unregistered") {
+					t.Error("user data lacks the stable provider ID or registration taint")
+				}
+			} else if _, ok := body["user_data"]; ok {
+				t.Error("SSHGateway unexpectedly sent user data")
+			}
 			vm = true
 			volume = true
 			posts++
