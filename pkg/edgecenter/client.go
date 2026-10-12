@@ -134,6 +134,14 @@ type Volume struct {
 	Status   string            `json:"status"`
 }
 
+func (c *Client) BareMetalCapacity(ctx context.Context) (map[string]int, error) {
+	var response struct {
+		Capacity map[string]int `json:"capacity"`
+	}
+	err := c.Do(ctx, "GET", fmt.Sprintf("/v2/bmcapacity/%d", c.Region), nil, &response)
+	return response.Capacity, err
+}
+
 func (c *Client) Instance(ctx context.Context, id string) (Instance, error) {
 	var v Instance
 	err := c.Do(ctx, "GET", c.Path("v1", "instances")+"/"+id, nil, &v)

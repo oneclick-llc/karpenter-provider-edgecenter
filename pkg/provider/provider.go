@@ -78,11 +78,29 @@ func (p *Provider) GetInstanceTypes(ctx context.Context, np *v1.NodePool) ([]*cp
 	if err != nil {
 		return nil, err
 	}
+	capacity, err := p.bareMetalCapacity(ctx, n.Spec)
+	if err != nil {
+		return nil, err
+	}
 	out := []*cp.InstanceType{}
 	for _, f := range n.Spec.Flavors {
-		out = append(out, instanceType(n.Spec, f))
+		it := instanceType(n.Spec, f)
+		if capacity != nil {
+			it.Offerings[0].Available = capacity[f.Name] > 0
+		}
+		out = append(out, it)
 	}
 	return out, nil
+}
+func (p *Provider) bareMetalCapacity(ctx context.Context, spec api.EdgeCenterNodeClassSpec) (map[string]int, error) {
+	if spec.ComputeType != "BareMetal" {
+		return nil, nil
+	}
+	c, err := p.cloud(ctx, &Launch{Spec: spec})
+	if err != nil {
+		return nil, err
+	}
+	return c.BareMetalCapacity(ctx)
 }
 
 type Launch struct {
@@ -99,6 +117,7 @@ type Launch struct {
 	VolumeIDs                                        []string
 	// Intent is written before a cloud mutation. Task is written after its response.
 	Intent, Task string
+	Failure      string
 	Configured   bool
 }
 
@@ -168,11 +187,15 @@ func (p *Provider) allocate(ctx context.Context, nc *v1.NodeClaim) (*corev1.Conf
 	if err != nil {
 		return nil, nil, err
 	}
+	capacity, err := p.bareMetalCapacity(ctx, n.Spec)
+	if err != nil {
+		return nil, nil, err
+	}
 	flavors := append([]api.Flavor(nil), n.Spec.Flavors...)
 	sort.Slice(flavors, func(i, j int) bool { return flavors[i].Price < flavors[j].Price })
 	var selected *api.Flavor
 	for i := range flavors {
-		if fits(instanceType(n.Spec, flavors[i]), nc) {
+		if (capacity == nil || capacity[flavors[i].Name] > 0) && fits(instanceType(n.Spec, flavors[i]), nc) {
 			selected = &flavors[i]
 			break
 		}

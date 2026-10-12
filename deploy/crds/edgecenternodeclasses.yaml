@@ -127,6 +127,11 @@ spec:
                 items:
                   type: string
                   minLength: 1
+              computeType:
+                type: string
+                enum:
+                - VirtualMachine
+                - BareMetal
             required:
             - clusterID
             - projectID
@@ -134,10 +139,8 @@ spec:
             - region
             - networkID
             - imageID
-            - securityGroupIDs
             - flavors
             - bootSizeGiB
-            - bootType
             - addresses
             - gateways
             - credentials
@@ -153,6 +156,13 @@ spec:
             - rule: (has(self.bootstrapMode) && self.bootstrapMode == 'UserData')
                 || has(self.ssh)
               message: SSHGateway requires an SSH secret.
+            - rule: (has(self.computeType) && self.computeType == 'BareMetal') ||
+                (has(self.securityGroupIDs) && has(self.bootType))
+              message: VirtualMachine requires security groups and bootType.
+            - rule: '!has(self.computeType) || self.computeType != ''BareMetal'' ||
+                (!has(self.securityGroupIDs) && !has(self.bootType) && !has(self.serverGroupID))'
+              message: BareMetal does not use VM security groups, server groups or
+                bootType.
           status:
             type: object
             x-kubernetes-preserve-unknown-fields: true

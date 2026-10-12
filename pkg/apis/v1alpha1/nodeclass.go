@@ -39,6 +39,8 @@ type Gateway struct {
 	PublicIP string `json:"publicIP"`
 }
 type EdgeCenterNodeClassSpec struct {
+	// Empty selects VirtualMachine for compatibility with existing NodeClasses.
+	ComputeType string `json:"computeType,omitempty"`
 	// UserData uses the OpenStack config drive and public Talos mTLS endpoints.
 	// Empty preserves the original SSHGateway transport.
 	BootstrapMode    string      `json:"bootstrapMode,omitempty"`
@@ -50,10 +52,10 @@ type EdgeCenterNodeClassSpec struct {
 	NetworkID        string      `json:"networkID"`
 	ImageID          string      `json:"imageID"`
 	ServerGroupID    string      `json:"serverGroupID,omitempty"`
-	SecurityGroupIDs []string    `json:"securityGroupIDs"`
+	SecurityGroupIDs []string    `json:"securityGroupIDs,omitempty"`
 	Flavors          []Flavor    `json:"flavors"`
 	BootSizeGiB      int         `json:"bootSizeGiB"`
-	BootType         string      `json:"bootType"`
+	BootType         string      `json:"bootType,omitempty"`
 	Addresses        AddressPool `json:"addresses"`
 	Gateways         []Gateway   `json:"gateways"`
 	// All secret references use the operator namespace.
@@ -125,6 +127,12 @@ func (s EdgeCenterNodeClassSpec) IP(slot int) (string, error) {
 	return a.String(), nil
 }
 func (s EdgeCenterNodeClassSpec) Validate() error {
+	if s.ComputeType != "" && s.ComputeType != "VirtualMachine" && s.ComputeType != "BareMetal" {
+		return fmt.Errorf("computeType must be VirtualMachine or BareMetal")
+	}
+	if s.ComputeType == "BareMetal" && (len(s.SecurityGroupIDs) != 0 || s.ServerGroupID != "" || s.BootType != "") {
+		return fmt.Errorf("BareMetal uses local disks and does not accept VM security groups, server groups or bootType")
+	}
 	if s.ClusterID == "" || s.ProjectID <= 0 || s.RegionID <= 0 || s.Region == "" || s.NetworkID == "" || s.ImageID == "" {
 		return fmt.Errorf("cluster, project, region, network and image are required")
 	}
@@ -137,7 +145,7 @@ func (s EdgeCenterNodeClassSpec) Validate() error {
 	if s.Addresses.KubeSpanPortBase+s.Addresses.Start < 1024 || s.Addresses.KubeSpanPortBase+s.Addresses.End > 65535 {
 		return fmt.Errorf("invalid KubeSpan port range")
 	}
-	if len(s.Flavors) == 0 || len(s.Gateways) == 0 || len(s.SecurityGroupIDs) == 0 || s.BootSizeGiB < 10 {
+	if len(s.Flavors) == 0 || len(s.Gateways) == 0 || (s.ComputeType != "BareMetal" && (len(s.SecurityGroupIDs) == 0 || s.BootType == "")) || s.BootSizeGiB < 10 {
 		return fmt.Errorf("flavors, gateways, security groups and boot disk are required")
 	}
 	for _, f := range s.Flavors {

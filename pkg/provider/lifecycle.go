@@ -18,6 +18,10 @@ func ids(t ec.Task, key string) []string {
 	_ = json.Unmarshal(t.Created[key], &out)
 	return out
 }
+
+type failedTask struct{ message string }
+
+func (e *failedTask) Error() string { return e.message }
 func (p *Provider) finishTask(ctx context.Context, c *ec.Client, cm *corev1.ConfigMap, r *Launch) error {
 	if r.Task == "" {
 		return nil
@@ -27,7 +31,20 @@ func (p *Provider) finishTask(ctx context.Context, c *ec.Client, cm *corev1.Conf
 		return err
 	}
 	if t.State == "ERROR" {
-		return fmt.Errorf("cloud task %s failed: %s", r.Task, t.Error)
+		if v := ids(t, "instances"); len(v) == 1 {
+			r.InstanceID = v[0]
+		}
+		if v := ids(t, "ports"); r.PortID == "" && len(v) == 1 {
+			r.PortID = v[0]
+		}
+		r.VolumeIDs = append(r.VolumeIDs, ids(t, "volumes")...)
+		r.Failure = fmt.Sprintf("cloud task %s failed: %s", r.Task, t.Error)
+		r.Intent = ""
+		r.Task = ""
+		if err = p.save(ctx, cm, r); err != nil {
+			return err
+		}
+		return &failedTask{r.Failure}
 	}
 	if t.State != "FINISHED" {
 		return fmt.Errorf("cloud task %s is %s", r.Task, t.State)
@@ -66,6 +83,9 @@ func (p *Provider) Create(ctx context.Context, nc *v1.NodeClaim) (*v1.NodeClaim,
 	if err = p.finishTask(ctx, c, cm, r); err != nil {
 		return nil, err
 	}
+	if r.Failure != "" {
+		return nil, fmt.Errorf("%s", r.Failure)
+	}
 	if r.PortID == "" {
 		if r.Intent != "" {
 			return nil, fmt.Errorf("port submission result is unknown; preserve slot %d and inspect the journal", r.Slot)
@@ -85,7 +105,7 @@ func (p *Provider) Create(ctx context.Context, nc *v1.NodeClaim) (*v1.NodeClaim,
 		}
 		r.Task, err = c.Submit(ctx, c.Path("v1", "reserved_fixed_ips"), map[string]any{"type": "ip_address", "network_id": r.Spec.NetworkID, "ip_address": r.IP, "is_vip": false})
 		if err != nil {
-			return nil, err
+			return nil, p.recordRejection(ctx, cm, r, err)
 		}
 		if err = p.save(ctx, cm, r); err != nil {
 			return nil, err
@@ -95,7 +115,11 @@ func (p *Provider) Create(ctx context.Context, nc *v1.NodeClaim) (*v1.NodeClaim,
 	if r.InstanceID == "" {
 		// Metadata allows recovery when the VM request succeeded but its response was lost.
 		if r.Intent != "" {
-			list, err := ec.List[ec.Instance](ctx, c, "instances")
+			resourceName := "instances"
+			if r.Spec.ComputeType == "BareMetal" {
+				resourceName = "bminstances"
+			}
+			list, err := ec.List[ec.Instance](ctx, c, resourceName)
 			if err != nil {
 				return nil, err
 			}
@@ -137,9 +161,17 @@ func (p *Provider) Create(ctx context.Context, nc *v1.NodeClaim) (*v1.NodeClaim,
 			if err = p.save(ctx, cm, r); err != nil {
 				return nil, err
 			}
-			r.Task, err = c.Submit(ctx, c.Path("v2", "instances"), body)
+			path := c.Path("v2", "instances")
+			if r.Spec.ComputeType == "BareMetal" {
+				path = c.Path("v1", "bminstances")
+				body["image_id"] = r.Spec.ImageID
+				delete(body, "volumes")
+				delete(body, "security_groups")
+				delete(body, "availability_zone")
+			}
+			r.Task, err = c.Submit(ctx, path, body)
 			if err != nil {
-				return nil, err
+				return nil, p.recordRejection(ctx, cm, r, err)
 			}
 			if err = p.save(ctx, cm, r); err != nil {
 				return nil, err
@@ -158,7 +190,7 @@ func (p *Provider) Create(ctx context.Context, nc *v1.NodeClaim) (*v1.NodeClaim,
 		return nil, fmt.Errorf("VM is %s", vm.Status)
 	}
 	// Only volumes marked for this claim can enter the cleanup journal.
-	if len(r.VolumeIDs) == 0 {
+	if len(r.VolumeIDs) == 0 && r.Spec.ComputeType != "BareMetal" {
 		volumes, err := ec.List[ec.Volume](ctx, c, "volumes")
 		if err != nil {
 			return nil, err
@@ -176,22 +208,24 @@ func (p *Provider) Create(ctx context.Context, nc *v1.NodeClaim) (*v1.NodeClaim,
 		}
 	}
 	if !r.Configured {
-		// Reserved ports can retain their initial groups. Assign groups to the exact owned port.
-		if err = c.Do(ctx, "POST", fmt.Sprintf("/v1/ports/%d/%d/%s/enable_port_security", r.Spec.ProjectID, r.Spec.RegionID, r.PortID), nil, nil); err != nil {
-			return nil, err
-		}
-		names := []string{}
-		for _, id := range r.Spec.SecurityGroupIDs {
-			var group struct {
-				Name string `json:"name"`
-			}
-			if err = c.Do(ctx, "GET", c.Path("v1", "securitygroups")+"/"+id, nil, &group); err != nil {
+		if r.Spec.ComputeType != "BareMetal" {
+			// Reserved ports can retain their initial groups. Assign groups to the exact owned port.
+			if err = c.Do(ctx, "POST", fmt.Sprintf("/v1/ports/%d/%d/%s/enable_port_security", r.Spec.ProjectID, r.Spec.RegionID, r.PortID), nil, nil); err != nil {
 				return nil, err
 			}
-			names = append(names, group.Name)
-		}
-		if err = c.Do(ctx, "POST", c.Path("v1", "instances")+"/"+r.InstanceID+"/addsecuritygroup", map[string]any{"ports_security_group_names": []map[string]any{{"port_id": r.PortID, "security_group_names": names}}}, nil); err != nil {
-			return nil, err
+			names := []string{}
+			for _, id := range r.Spec.SecurityGroupIDs {
+				var group struct {
+					Name string `json:"name"`
+				}
+				if err = c.Do(ctx, "GET", c.Path("v1", "securitygroups")+"/"+id, nil, &group); err != nil {
+					return nil, err
+				}
+				names = append(names, group.Name)
+			}
+			if err = c.Do(ctx, "POST", c.Path("v1", "instances")+"/"+r.InstanceID+"/addsecuritygroup", map[string]any{"ports_security_group_names": []map[string]any{{"port_id": r.PortID, "security_group_names": names}}}, nil); err != nil {
+				return nil, err
+			}
 		}
 		ts, err := p.secret(ctx, r.Spec.Talos.Name)
 		if err != nil {
@@ -227,6 +261,24 @@ func (p *Provider) Delete(ctx context.Context, nc *v1.NodeClaim) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	cm, r, err := p.find(ctx, nc.Status.ProviderID)
+	if cp.IsNodeClaimNotFoundError(err) && nc.Status.ProviderID == "" {
+		records, e := p.records(ctx)
+		if e != nil {
+			return e
+		}
+		for i := range records {
+			launch, e := decode(&records[i])
+			if e != nil {
+				return e
+			}
+			if launch.UID == string(nc.UID) {
+				cm = &records[i]
+				r = launch
+				err = nil
+				break
+			}
+		}
+	}
 	if err != nil {
 		return err
 	}
@@ -239,8 +291,13 @@ func (p *Provider) delete(ctx context.Context, cm *corev1.ConfigMap, r *Launch) 
 	}
 	if r.Task != "" {
 		if err = p.finishTask(ctx, c, cm, r); err != nil {
-			return err
+			if _, ok := err.(*failedTask); !ok {
+				return err
+			}
 		}
+	}
+	if r.Intent != "" && r.Task == "" {
+		return fmt.Errorf("cloud request result is unknown; cleanup preserves the slot")
 	}
 	if r.InstanceID != "" {
 		vm, err := c.Instance(ctx, r.InstanceID)
@@ -251,8 +308,16 @@ func (p *Provider) delete(ctx context.Context, cm *corev1.ConfigMap, r *Launch) 
 			if vm.Status == "DELETING" {
 				return nil
 			}
-			if err = c.Do(ctx, "DELETE", c.Path("v1", "instances")+"/"+r.InstanceID, nil, nil); err != nil && !ec.IsNotFound(err) {
+			var deletion ec.TaskResponse
+			if err = c.Do(ctx, "DELETE", c.Path("v1", "instances")+"/"+r.InstanceID, nil, &deletion); err != nil && !ec.IsNotFound(err) {
 				return err
+			}
+			if len(deletion.Tasks) == 1 {
+				r.Intent = "delete-instance"
+				r.Task = deletion.Tasks[0]
+				if err = p.save(ctx, cm, r); err != nil {
+					return err
+				}
 			}
 			return nil
 		}
@@ -299,4 +364,19 @@ func (p *Provider) delete(ctx context.Context, cm *corev1.ConfigMap, r *Launch) 
 		return err
 	}
 	return cp.NewNodeClaimNotFoundError(fmt.Errorf("owned VM, boot volume and port are deleted"))
+}
+
+// A definitive HTTP rejection did not start a task. Transport failures remain uncertain.
+func (p *Provider) recordRejection(ctx context.Context, cm *corev1.ConfigMap, r *Launch, err error) error {
+	if e, ok := err.(*ec.APIError); ok && e.Status >= 400 && e.Status < 500 && e.Status != 408 {
+		r.Intent = ""
+		r.Task = ""
+		if e.Status != 409 && e.Status != 429 {
+			r.Failure = err.Error()
+		}
+		if saveErr := p.save(ctx, cm, r); saveErr != nil {
+			return saveErr
+		}
+	}
+	return err
 }

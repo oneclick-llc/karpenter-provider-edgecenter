@@ -1,0 +1,34 @@
+apiVersion: karpenter.edgecenter.ru/v1alpha1
+kind: EdgeCenterNodeClass
+metadata:
+  name: example-baremetal
+spec:
+  clusterID: example-cluster
+  projectID: 12345
+  regionID: 10
+  region: example-region
+  networkID: REPLACE_NETWORK_UUID
+  imageID: REPLACE_BAREMETAL_TALOS_IMAGE_UUID
+  flavors:
+  - name: bm1-hf-medium
+    cpu: 16
+    memoryGiB: 64
+    price: 1
+  bootSizeGiB: 447
+  addresses:
+    cidr: 10.64.0.0/18
+    hostOffset: 266
+    start: 18
+    end: 18
+    kubeSpanPortBase: 52110
+  gateways:
+  - publicIP: 192.0.2.10
+  - publicIP: 192.0.2.11
+  credentials:
+    name: edgecenter-api
+  talos:
+    name: talos-worker
+  bootstrapMode: UserData
+  talosEndpoints:
+  - 192.0.2.20:50000
+  computeType: BareMetal

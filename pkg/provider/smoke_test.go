@@ -34,7 +34,7 @@ func TestFitsRejectsTalosMemoryOvercommit(t *testing.T) {
 }
 
 func TestLifecycleSmoke(t *testing.T) {
-	for _, mode := range []string{"SSHGateway", "UserData"} {
+	for _, mode := range []string{"SSHGateway", "UserData", "BareMetal"} {
 		t.Run(mode, func(t *testing.T) { lifecycleSmoke(t, mode) })
 	}
 }
@@ -46,6 +46,13 @@ func lifecycleSmoke(t *testing.T, mode string) {
 	scheme.AddKnownTypes(schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}, &v1.NodeClaim{}, &v1.NodeClaimList{}, &v1.NodePool{}, &v1.NodePoolList{})
 	_ = api.AddToScheme(scheme)
 	spec := api.EdgeCenterNodeClassSpec{ClusterID: "test", ProjectID: 1, RegionID: 10, Region: "moscow", NetworkID: "network", ImageID: "image", SecurityGroupIDs: []string{"sg"}, Flavors: []api.Flavor{{Name: "small", CPU: 4, MemoryGiB: 16, Price: 1}}, BootSizeGiB: 64, BootType: "standard", Addresses: api.AddressPool{CIDR: "10.64.0.0/18", HostOffset: 266, Start: 16, End: 17, KubeSpanPortBase: 52110}, Gateways: []api.Gateway{{Address: "gateway", User: "ops", PublicIP: "192.0.2.1"}}, Credentials: api.SecretRef{Name: "cloud"}, Talos: api.SecretRef{Name: "talos"}, SSH: api.SecretRef{Name: "ssh"}}
+	bare := mode == "BareMetal"
+	if bare {
+		mode = "UserData"
+		spec.ComputeType = "BareMetal"
+		spec.BootType = ""
+		spec.SecurityGroupIDs = nil
+	}
 	spec.BootstrapMode = mode
 	if mode == "UserData" {
 		spec.TalosEndpoints = []string{"192.0.2.10:50000"}
@@ -66,7 +73,10 @@ func lifecycleSmoke(t *testing.T, mode string) {
 			port = true
 			posts++
 			reply(map[string]any{"tasks": []string{"port-task"}})
-		case r.Method == "POST" && r.URL.Path == "/v2/instances/1/10":
+		case r.Method == "POST" && (r.URL.Path == "/v2/instances/1/10" || r.URL.Path == "/v1/bminstances/1/10"):
+			if bare && r.URL.Path != "/v1/bminstances/1/10" {
+				t.Error("bare metal used the VM create endpoint")
+			}
 			var body map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Error(err)
@@ -80,14 +90,33 @@ func lifecycleSmoke(t *testing.T, mode string) {
 			} else if _, ok := body["user_data"]; ok {
 				t.Error("SSHGateway unexpectedly sent user data")
 			}
+			if bare {
+				if _, ok := body["volumes"]; ok {
+					t.Error("bare metal allocated a Cinder volume")
+				}
+				if _, ok := body["security_groups"]; ok {
+					t.Error("bare metal received VM security groups")
+				}
+				if body["image_id"] != "image" {
+					t.Error("bare metal image is missing")
+				}
+			}
 			vm = true
-			volume = true
+			volume = !bare
 			posts++
 			reply(map[string]any{"tasks": []string{"vm-task"}})
 		case r.URL.Path == "/v1/tasks/port-task":
 			reply(map[string]any{"state": "FINISHED", "created_resources": map[string]any{"ports": []string{"port"}}})
+		case r.URL.Path == "/v1/tasks/delete":
+			reply(map[string]any{"state": "FINISHED"})
+		case r.URL.Path == "/v2/bmcapacity/10":
+			reply(map[string]any{"capacity": map[string]int{"small": 1}})
 		case r.URL.Path == "/v1/tasks/vm-task":
-			reply(map[string]any{"state": "FINISHED", "created_resources": map[string]any{"instances": []string{"vm"}, "volumes": []string{"disk"}}})
+			disks := []string{}
+			if !bare {
+				disks = append(disks, "disk")
+			}
+			reply(map[string]any{"state": "FINISHED", "created_resources": map[string]any{"instances": []string{"vm"}, "volumes": disks}})
 		case r.URL.Path == "/v1/instances/1/10/vm":
 			if !vm {
 				w.WriteHeader(404)

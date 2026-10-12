@@ -106,6 +106,23 @@ Terraform and Karpenter must use separate slot ranges.
 The deployment runs only on control-plane nodes.
 It tolerates the control-plane scheduling taint. Worker pools can scale to zero without removing the controller.
 
+## Bare metal
+
+Set `spec.computeType: BareMetal` to use the physical server API.
+The provider checks the regional hardware inventory before it selects a bare metal flavor.
+The image must have the EdgeCenter `is_baremetal` property. A VM image ID does not pass this check.
+
+Bare metal requires a VLAN network with access to the cluster network and its gateways.
+Do not set `securityGroupIDs`, `serverGroupID`, or `bootType` for bare metal.
+Those fields belong to the VM API. The provider does not pretend to apply VM firewall rules to physical hardware.
+
+For bare metal, `bootSizeGiB` describes the usable boot disk capacity for scheduling.
+It does not allocate a Cinder disk. The provider deletes the server and its reserved port after node termination.
+The cloud provider handles the physical disk cleanup.
+
+`deploy/examples/baremetal-nodeclass.yaml` contains a bounded example.
+The example price is a relative weight. Check the actual tariff before a deployment.
+
 ## Static pools
 
 `deploy/examples/static.yaml` sets `spec.replicas: 1`.
@@ -141,8 +158,8 @@ Check the fixed replica count separately with the static example.
 ## Operational boundaries
 
 - The flavor catalog and prices are explicit configuration. The provider does not import billing prices or GPU resources.
-- The provider supports amd64 Talos workers and on-demand instances.
-- An uncertain port creation or failed cloud task requires inspection before further creation.
+- The provider supports amd64 Talos workers on virtual machines and bare metal.
+- An uncertain port creation requires inspection before further creation. Failed tasks retain their resource IDs for cleanup.
 - Changes to the NodeClass specification cause drift. Use Karpenter disruption budgets to control replacements.
 - Node repair and in-place reboot are not enabled.
 - The launch journals must survive controller upgrades. Do not delete the operator namespace while it owns cloud resources.
