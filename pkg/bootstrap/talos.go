@@ -61,6 +61,17 @@ func Render(base []byte, s api.EdgeCenterNodeClassSpec, name, ip, providerID str
 		{"apiVersion": "v1alpha1", "kind": "KubeSpanConfig", "filters": map[string]any{"endpoints": []string{ip + "/32"}}},
 		{"apiVersion": "v1alpha1", "kind": "KubeSpanEndpointsConfig", "extraAnnouncedEndpoints": endpoints},
 	}
+	if b := s.BareMetalStorage; s.ComputeType == "BareMetal" && b != nil {
+		size := fmt.Sprintf("%dGiB", b.EphemeralSizeGiB)
+		docs = append(docs,
+			map[string]any{"apiVersion": "v1alpha1", "kind": "VolumeConfig", "name": "EPHEMERAL", "provisioning": map[string]any{
+				"diskSelector": map[string]string{"match": "system_disk"}, "minSize": size, "maxSize": size, "grow": false,
+			}},
+			map[string]any{"apiVersion": "v1alpha1", "kind": "UserVolumeConfig", "name": b.LocalVolumeName, "volumeType": "partition", "provisioning": map[string]any{
+				"diskSelector": map[string]string{"match": "system_disk"}, "minSize": "1GiB", "grow": true,
+			}},
+		)
+	}
 	var patch []string
 	for _, d := range docs {
 		b, err := yaml.Marshal(d)

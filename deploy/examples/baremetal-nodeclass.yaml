@@ -14,7 +14,10 @@ spec:
     cpu: 16
     memoryGiB: 64
     price: 1
-  bootSizeGiB: 447
+  bootSizeGiB: 447 # Usable capacity estimate of the physical boot disk.
+  bareMetalStorage:
+    ephemeralSizeGiB: 64 # Talos /var; use 128 here for a larger system partition.
+    localVolumeName: local-data # Remaining space mounted at /var/mnt/local-data.
   addresses:
     cidr: 10.64.0.0/18
     hostOffset: 266

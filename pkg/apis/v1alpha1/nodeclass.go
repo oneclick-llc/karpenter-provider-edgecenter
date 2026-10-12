@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/netip"
+	"regexp"
 
 	"github.com/awslabs/operatorpkg/status"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -38,26 +39,34 @@ type Gateway struct {
 	User     string `json:"user"`
 	PublicIP string `json:"publicIP"`
 }
+type BareMetalStorage struct {
+	EphemeralSizeGiB int    `json:"ephemeralSizeGiB"`
+	LocalVolumeName  string `json:"localVolumeName"`
+}
+
+var localVolumeNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,33}$`)
+
 type EdgeCenterNodeClassSpec struct {
 	// Empty selects VirtualMachine for compatibility with existing NodeClasses.
 	ComputeType string `json:"computeType,omitempty"`
 	// UserData uses the OpenStack config drive and public Talos mTLS endpoints.
 	// Empty preserves the original SSHGateway transport.
-	BootstrapMode    string      `json:"bootstrapMode,omitempty"`
-	TalosEndpoints   []string    `json:"talosEndpoints,omitempty"`
-	ClusterID        string      `json:"clusterID"`
-	ProjectID        int         `json:"projectID"`
-	RegionID         int         `json:"regionID"`
-	Region           string      `json:"region"`
-	NetworkID        string      `json:"networkID"`
-	ImageID          string      `json:"imageID"`
-	ServerGroupID    string      `json:"serverGroupID,omitempty"`
-	SecurityGroupIDs []string    `json:"securityGroupIDs,omitempty"`
-	Flavors          []Flavor    `json:"flavors"`
-	BootSizeGiB      int         `json:"bootSizeGiB"`
-	BootType         string      `json:"bootType,omitempty"`
-	Addresses        AddressPool `json:"addresses"`
-	Gateways         []Gateway   `json:"gateways"`
+	BootstrapMode    string            `json:"bootstrapMode,omitempty"`
+	TalosEndpoints   []string          `json:"talosEndpoints,omitempty"`
+	ClusterID        string            `json:"clusterID"`
+	ProjectID        int               `json:"projectID"`
+	RegionID         int               `json:"regionID"`
+	Region           string            `json:"region"`
+	NetworkID        string            `json:"networkID"`
+	ImageID          string            `json:"imageID"`
+	ServerGroupID    string            `json:"serverGroupID,omitempty"`
+	SecurityGroupIDs []string          `json:"securityGroupIDs,omitempty"`
+	Flavors          []Flavor          `json:"flavors"`
+	BootSizeGiB      int               `json:"bootSizeGiB"`
+	BootType         string            `json:"bootType,omitempty"`
+	BareMetalStorage *BareMetalStorage `json:"bareMetalStorage,omitempty"`
+	Addresses        AddressPool       `json:"addresses"`
+	Gateways         []Gateway         `json:"gateways"`
 	// All secret references use the operator namespace.
 	Credentials SecretRef `json:"credentials"`
 	Talos       SecretRef `json:"talos"`
@@ -127,6 +136,17 @@ func (s EdgeCenterNodeClassSpec) IP(slot int) (string, error) {
 	return a.String(), nil
 }
 func (s EdgeCenterNodeClassSpec) Validate() error {
+	if b := s.BareMetalStorage; b != nil {
+		if s.ComputeType != "BareMetal" {
+			return fmt.Errorf("bareMetalStorage requires computeType BareMetal")
+		}
+		if b.EphemeralSizeGiB < 10 || b.EphemeralSizeGiB > s.BootSizeGiB-5 {
+			return fmt.Errorf("bareMetalStorage.ephemeralSizeGiB must be at least 10 and leave 5 GiB for system partitions and local data")
+		}
+		if !localVolumeNamePattern.MatchString(b.LocalVolumeName) {
+			return fmt.Errorf("bareMetalStorage.localVolumeName must match %s", localVolumeNamePattern)
+		}
+	}
 	if s.ComputeType != "" && s.ComputeType != "VirtualMachine" && s.ComputeType != "BareMetal" {
 		return fmt.Errorf("computeType must be VirtualMachine or BareMetal")
 	}

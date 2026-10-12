@@ -69,9 +69,15 @@ func (p *Provider) class(ctx context.Context, name string) (*api.EdgeCenterNodeC
 	return n, nil
 }
 func instanceType(s api.EdgeCenterNodeClassSpec, f api.Flavor) *cp.InstanceType {
+	ephemeralGiB, evictionSizeGiB := s.BootSizeGiB-4, s.BootSizeGiB
+	if s.ComputeType == "BareMetal" && s.BareMetalStorage != nil {
+		// User volumes are not kubelet ephemeral storage. Reserve space for filesystem metadata.
+		ephemeralGiB = s.BareMetalStorage.EphemeralSizeGiB - 1
+		evictionSizeGiB = s.BareMetalStorage.EphemeralSizeGiB
+	}
 	labels := map[string]string{corev1.LabelInstanceTypeStable: f.Name, corev1.LabelTopologyRegion: s.Region, corev1.LabelTopologyZone: s.Region, corev1.LabelArchStable: "amd64", corev1.LabelOSStable: "linux", v1.CapacityTypeLabelKey: v1.CapacityTypeOnDemand}
-	capacity := corev1.ResourceList{corev1.ResourceCPU: resource.MustParse(strconv.FormatInt(f.CPU, 10)), corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dGi", f.MemoryGiB)), corev1.ResourcePods: resource.MustParse("110"), corev1.ResourceEphemeralStorage: resource.MustParse(fmt.Sprintf("%dGi", s.BootSizeGiB-4))}
-	return &cp.InstanceType{Name: f.Name, Requirements: scheduling.NewLabelRequirements(labels), Capacity: capacity, Overhead: &cp.InstanceTypeOverhead{KubeReserved: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("50m"), corev1.ResourceMemory: resource.MustParse("1Gi")}, EvictionThreshold: corev1.ResourceList{corev1.ResourceEphemeralStorage: resource.MustParse(fmt.Sprintf("%dGi", s.BootSizeGiB/10+1))}}, Offerings: cp.Offerings{&cp.Offering{Requirements: scheduling.NewLabelRequirements(map[string]string{corev1.LabelTopologyZone: s.Region, v1.CapacityTypeLabelKey: v1.CapacityTypeOnDemand}), Price: f.Price, Available: true}}}
+	capacity := corev1.ResourceList{corev1.ResourceCPU: resource.MustParse(strconv.FormatInt(f.CPU, 10)), corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dGi", f.MemoryGiB)), corev1.ResourcePods: resource.MustParse("110"), corev1.ResourceEphemeralStorage: resource.MustParse(fmt.Sprintf("%dGi", ephemeralGiB))}
+	return &cp.InstanceType{Name: f.Name, Requirements: scheduling.NewLabelRequirements(labels), Capacity: capacity, Overhead: &cp.InstanceTypeOverhead{KubeReserved: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("50m"), corev1.ResourceMemory: resource.MustParse("1Gi")}, EvictionThreshold: corev1.ResourceList{corev1.ResourceEphemeralStorage: resource.MustParse(fmt.Sprintf("%dGi", evictionSizeGiB/10+1))}}, Offerings: cp.Offerings{&cp.Offering{Requirements: scheduling.NewLabelRequirements(map[string]string{corev1.LabelTopologyZone: s.Region, v1.CapacityTypeLabelKey: v1.CapacityTypeOnDemand}), Price: f.Price, Available: true}}}
 }
 func (p *Provider) GetInstanceTypes(ctx context.Context, np *v1.NodePool) ([]*cp.InstanceType, error) {
 	n, err := p.class(ctx, np.Spec.Template.Spec.NodeClassRef.Name)

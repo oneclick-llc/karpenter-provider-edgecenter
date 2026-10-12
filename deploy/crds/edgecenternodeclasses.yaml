@@ -71,6 +71,22 @@ spec:
               bootSizeGiB:
                 type: integer
                 minimum: 10
+              bareMetalStorage:
+                type: object
+                description: Optional partition layout for new bare metal workers.
+                properties:
+                  ephemeralSizeGiB:
+                    type: integer
+                    minimum: 10
+                    description: Size of the Talos EPHEMERAL partition in GiB.
+                  localVolumeName:
+                    type: string
+                    maxLength: 34
+                    pattern: '^[a-z][a-z0-9-]{0,33}$'
+                    description: User volume at /var/mnt/<name> that consumes the remaining system disk space.
+                required:
+                - ephemeralSizeGiB
+                - localVolumeName
               bootType:
                 type: string
                 enum:
@@ -146,6 +162,10 @@ spec:
             - credentials
             - talos
             x-kubernetes-validations:
+            - rule: '!has(self.bareMetalStorage) || (has(self.computeType) && self.computeType == "BareMetal")'
+              message: bareMetalStorage requires computeType BareMetal.
+            - rule: '!has(self.bareMetalStorage) || self.bareMetalStorage.ephemeralSizeGiB <= self.bootSizeGiB - 5'
+              message: Leave at least 5 GiB for system partitions and local data.
             - rule: self.addresses.end >= self.addresses.start
               message: The slot range must not be empty.
             - rule: self.addresses.end - self.addresses.start <= 255

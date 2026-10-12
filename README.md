@@ -121,6 +121,34 @@ For bare metal, `bootSizeGiB` describes the usable boot disk capacity for schedu
 It does not allocate a Cinder disk. The provider deletes the server and its reserved port after node termination.
 The cloud provider handles the physical disk cleanup.
 
+Set the optional `bareMetalStorage` block in each EdgeCenterNodeClass to split the boot disk:
+
+```yaml
+spec:
+  computeType: BareMetal
+  bootSizeGiB: 447
+  bareMetalStorage:
+    ephemeralSizeGiB: 64
+    localVolumeName: local-data
+```
+
+`ephemeralSizeGiB` sets the size of the Talos `EPHEMERAL` partition (`/var`).
+For example, set `128` for a 128 GiB partition.
+The user volume consumes the remaining space on the same disk and mounts at `/var/mnt/<localVolumeName>`.
+Talos creates both partitions from the initial machine configuration.
+The controller excludes the user volume from its estimate of Kubernetes `ephemeral-storage`.
+
+`bootSizeGiB` remains the capacity estimate for the entire boot disk.
+The configuration must leave at least 5 GiB for service partitions and the user volume.
+The disk must also contain enough free space for the requested layout.
+Without `bareMetalStorage`, the provider preserves the layout from the base Talos configuration.
+VirtualMachine NodeClasses cannot use this block.
+
+This setting applies to new nodes. It does not shrink existing partitions.
+A change to this block causes NodeClass drift and can replace existing nodes.
+Local data does not move to replacement nodes. Configure disruption controls and database replication before storing persistent data.
+This block creates the host filesystem only. Configure local PVs or a local provisioner separately.
+
 `deploy/examples/baremetal-nodeclass.yaml` contains a bounded example.
 The example price is a relative weight. Check the actual tariff before a deployment.
 

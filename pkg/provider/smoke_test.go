@@ -22,6 +22,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	cp "sigs.k8s.io/karpenter/pkg/cloudprovider"
+	"sigs.k8s.io/yaml"
 )
 
 func TestFitsRejectsTalosMemoryOvercommit(t *testing.T) {
@@ -34,7 +35,7 @@ func TestFitsRejectsTalosMemoryOvercommit(t *testing.T) {
 }
 
 func TestLifecycleSmoke(t *testing.T) {
-	for _, mode := range []string{"SSHGateway", "UserData", "BareMetal"} {
+	for _, mode := range []string{"SSHGateway", "UserData", "BareMetal", "BareMetalStorage"} {
 		t.Run(mode, func(t *testing.T) { lifecycleSmoke(t, mode) })
 	}
 }
@@ -46,7 +47,12 @@ func lifecycleSmoke(t *testing.T, mode string) {
 	scheme.AddKnownTypes(schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}, &v1.NodeClaim{}, &v1.NodeClaimList{}, &v1.NodePool{}, &v1.NodePoolList{})
 	_ = api.AddToScheme(scheme)
 	spec := api.EdgeCenterNodeClassSpec{ClusterID: "test", ProjectID: 1, RegionID: 10, Region: "moscow", NetworkID: "network", ImageID: "image", SecurityGroupIDs: []string{"sg"}, Flavors: []api.Flavor{{Name: "small", CPU: 4, MemoryGiB: 16, Price: 1}}, BootSizeGiB: 64, BootType: "standard", Addresses: api.AddressPool{CIDR: "10.64.0.0/18", HostOffset: 266, Start: 16, End: 17, KubeSpanPortBase: 52110}, Gateways: []api.Gateway{{Address: "gateway", User: "ops", PublicIP: "192.0.2.1"}}, Credentials: api.SecretRef{Name: "cloud"}, Talos: api.SecretRef{Name: "talos"}, SSH: api.SecretRef{Name: "ssh"}}
-	bare := mode == "BareMetal"
+	storage := mode == "BareMetalStorage"
+	bare := mode == "BareMetal" || storage
+	if storage {
+		spec.BootSizeGiB = 447
+		spec.BareMetalStorage = &api.BareMetalStorage{EphemeralSizeGiB: 64, LocalVolumeName: "database"}
+	}
 	if bare {
 		mode = "UserData"
 		spec.ComputeType = "BareMetal"
@@ -86,6 +92,30 @@ func lifecycleSmoke(t *testing.T, mode string) {
 				decoded, err := base64.StdEncoding.DecodeString(encoded)
 				if err != nil || !strings.Contains(string(decoded), "edgecenter://1/10/claim-1") || !strings.Contains(string(decoded), "karpenter.sh/unregistered") {
 					t.Error("user data lacks the stable provider ID or registration taint")
+				}
+				volumes := 0
+				for _, document := range strings.Split(string(decoded), "---\n") {
+					var doc map[string]any
+					if err := yaml.Unmarshal([]byte(document), &doc); err != nil {
+						t.Fatal(err)
+					}
+					if doc["kind"] == "VolumeConfig" && doc["name"] == "EPHEMERAL" {
+						provisioning := doc["provisioning"].(map[string]any)
+						if provisioning["maxSize"] != "64GiB" || provisioning["minSize"] != "64GiB" || provisioning["grow"] != false {
+							t.Fatal("incorrect EPHEMERAL partition")
+						}
+						volumes++
+					}
+					if doc["kind"] == "UserVolumeConfig" {
+						provisioning := doc["provisioning"].(map[string]any)
+						if doc["name"] != "database" || provisioning["grow"] != true {
+							t.Fatal("incorrect local data partition")
+						}
+						volumes++
+					}
+				}
+				if (storage && volumes != 2) || (!storage && volumes != 0) {
+					t.Fatal("unexpected storage documents in user data")
 				}
 			} else if _, ok := body["user_data"]; ok {
 				t.Error("SSHGateway unexpectedly sent user data")
@@ -230,5 +260,57 @@ func lifecycleSmoke(t *testing.T, mode string) {
 	records, err := p.records(ctx)
 	if err != nil || len(records) != 0 {
 		t.Fatal("slot was not released")
+	}
+}
+
+func TestBareMetalStorageConfiguration(t *testing.T) {
+	base := api.EdgeCenterNodeClassSpec{ComputeType: "BareMetal", BootstrapMode: "UserData", TalosEndpoints: []string{"192.0.2.1:50000"}, ClusterID: "test", ProjectID: 1, RegionID: 10, Region: "test", NetworkID: "network", ImageID: "image", BootSizeGiB: 447, Flavors: []api.Flavor{{Name: "bare", CPU: 16, MemoryGiB: 64, Price: 1}}, Addresses: api.AddressPool{CIDR: "10.64.0.0/18", HostOffset: 266, Start: 18, End: 18, KubeSpanPortBase: 52110}, Gateways: []api.Gateway{{PublicIP: "192.0.2.1"}}, Credentials: api.SecretRef{Name: "cloud"}, Talos: api.SecretRef{Name: "talos"}}
+	for _, size := range []int{64, 128} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			spec := base
+			spec.BareMetalStorage = &api.BareMetalStorage{EphemeralSizeGiB: size, LocalVolumeName: "local-data"}
+			if err := spec.Validate(); err != nil {
+				t.Fatal(err)
+			}
+			config, err := bootstrap.Render([]byte("version: v1alpha1\nmachine:\n  type: worker\n---\napiVersion: v1alpha1\nkind: VolumeConfig\nname: EPHEMERAL\nmount:\n  secure: true\n"), spec, "worker", "10.64.1.28", "edgecenter://1/10/id", 18, nil, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(config), fmt.Sprintf("maxSize: %dGiB", size)) || !strings.Contains(string(config), "secure: true") {
+				t.Fatal("storage size or existing mount options lost")
+			}
+			it := instanceType(spec, spec.Flavors[0])
+			expected := resource.MustParse(fmt.Sprintf("%dGi", size-1))
+			if it.Capacity.StorageEphemeral().Cmp(expected) != 0 {
+				t.Fatal("local data capacity was advertised as ephemeral storage")
+			}
+			nc := &v1.NodeClaim{}
+			nc.Spec.Resources.Requests = corev1.ResourceList{corev1.ResourceEphemeralStorage: resource.MustParse("200Gi")}
+			if fits(it, nc) {
+				t.Fatal("accepted more ephemeral storage than the partition provides")
+			}
+			if hash(spec) == hash(base) {
+				t.Fatal("storage layout is missing from drift detection")
+			}
+		})
+	}
+	for _, tc := range []struct {
+		name, compute, volume string
+		size                  int
+	}{
+		{"vm", "VirtualMachine", "local-data", 64},
+		{"too-small", "BareMetal", "local-data", 0},
+		{"no-data-space", "BareMetal", "local-data", 443},
+		{"bad-path", "BareMetal", "../data", 64},
+		{"no-name", "BareMetal", "", 64},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := base
+			spec.ComputeType = tc.compute
+			spec.BareMetalStorage = &api.BareMetalStorage{EphemeralSizeGiB: tc.size, LocalVolumeName: tc.volume}
+			if err := spec.Validate(); err == nil {
+				t.Fatal("invalid storage configuration accepted")
+			}
+		})
 	}
 }
