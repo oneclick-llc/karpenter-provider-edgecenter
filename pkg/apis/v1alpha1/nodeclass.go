@@ -42,6 +42,8 @@ type Gateway struct {
 type BareMetalStorage struct {
 	EphemeralSizeGiB int    `json:"ephemeralSizeGiB"`
 	LocalVolumeName  string `json:"localVolumeName"`
+	// DataDiskVolumeName, when set, mounts the first non-system disk at /var/mnt/<name>.
+	DataDiskVolumeName string `json:"dataDiskVolumeName,omitempty"`
 }
 
 var localVolumeNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,33}$`)
@@ -145,6 +147,12 @@ func (s EdgeCenterNodeClassSpec) Validate() error {
 		}
 		if !localVolumeNamePattern.MatchString(b.LocalVolumeName) {
 			return fmt.Errorf("bareMetalStorage.localVolumeName must match %s", localVolumeNamePattern)
+		}
+		if b.DataDiskVolumeName != "" && !localVolumeNamePattern.MatchString(b.DataDiskVolumeName) {
+			return fmt.Errorf("bareMetalStorage.dataDiskVolumeName must match %s", localVolumeNamePattern)
+		}
+		if b.DataDiskVolumeName == b.LocalVolumeName {
+			return fmt.Errorf("bareMetalStorage.dataDiskVolumeName must differ from localVolumeName")
 		}
 	}
 	if s.ComputeType != "" && s.ComputeType != "VirtualMachine" && s.ComputeType != "BareMetal" {

@@ -13,6 +13,8 @@ import (
 	api "github.com/oneclick-llc/karpenter-provider-edgecenter/pkg/apis/v1alpha1"
 	"github.com/oneclick-llc/karpenter-provider-edgecenter/pkg/bootstrap"
 	ec "github.com/oneclick-llc/karpenter-provider-edgecenter/pkg/edgecenter"
+	"github.com/siderolabs/talos/pkg/machinery/cel"
+	"github.com/siderolabs/talos/pkg/machinery/cel/celenv"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -310,6 +312,45 @@ func TestBareMetalStorageConfiguration(t *testing.T) {
 			spec.BareMetalStorage = &api.BareMetalStorage{EphemeralSizeGiB: tc.size, LocalVolumeName: tc.volume}
 			if err := spec.Validate(); err == nil {
 				t.Fatal("invalid storage configuration accepted")
+			}
+		})
+	}
+	t.Run("data-disk", func(t *testing.T) {
+		spec := base
+		spec.BareMetalStorage = &api.BareMetalStorage{EphemeralSizeGiB: 64, LocalVolumeName: "local-data", DataDiskVolumeName: "local-data2"}
+		if err := spec.Validate(); err != nil {
+			t.Fatal(err)
+		}
+		config, err := bootstrap.Render([]byte("version: v1alpha1\nmachine:\n  type: worker\n"), spec, "worker", "10.64.1.28", "edgecenter://1/10/id", 18, nil, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := string(config)
+		if !strings.Contains(out, "name: local-data2") || !strings.Contains(out, "'"+bootstrap.DataDiskSelector+"'") {
+			t.Fatalf("data disk volume missing or not limited to non-system disks:\n%s", out)
+		}
+		// Talos compiles the selector in this environment on the node; a typo would leave the disk unused.
+		if _, err := cel.ParseBooleanExpression(bootstrap.DataDiskSelector, celenv.DiskLocator()); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Count(out, "kind: UserVolumeConfig") != 2 {
+			t.Fatal("expected one user volume on each disk")
+		}
+		withoutDataDisk := spec
+		withoutDataDisk.BareMetalStorage = &api.BareMetalStorage{EphemeralSizeGiB: 64, LocalVolumeName: "local-data"}
+		if hash(spec) == hash(withoutDataDisk) {
+			t.Fatal("data disk volume is missing from drift detection")
+		}
+	})
+	for _, tc := range []struct{ name, volume string }{
+		{"data-disk-same-name", "local-data"},
+		{"data-disk-bad-path", "../data"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := base
+			spec.BareMetalStorage = &api.BareMetalStorage{EphemeralSizeGiB: 64, LocalVolumeName: "local-data", DataDiskVolumeName: tc.volume}
+			if err := spec.Validate(); err == nil {
+				t.Fatal("invalid data disk configuration accepted")
 			}
 		})
 	}

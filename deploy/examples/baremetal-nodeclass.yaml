@@ -18,6 +18,7 @@ spec:
   bareMetalStorage:
     ephemeralSizeGiB: 64 # Talos /var; use 128 here for a larger system partition.
     localVolumeName: local-data # Remaining space mounted at /var/mnt/local-data.
+    # dataDiskVolumeName: local-data2 # Optional: whole second disk at /var/mnt/local-data2.
   addresses:
     cidr: 10.64.0.0/18
     hostOffset: 266
