@@ -23,6 +23,10 @@ import (
 
 type Secrets struct{ Worker, Config, SSHKey, KnownHosts []byte }
 
+// DataDiskSelector picks the bare metal data disk: any non-system disk above 100 GiB,
+// which keeps virtual media and small devices out of the match.
+const DataDiskSelector = "!system_disk && disk.size > 100u * GiB"
+
 // Probe uses the public control-plane endpoint as an authenticated Talos proxy.
 // It does not expose or connect to the worker's maintenance API.
 func Probe(ctx context.Context, endpoints []string, config []byte, node string) error {
@@ -71,6 +75,12 @@ func Render(base []byte, s api.EdgeCenterNodeClassSpec, name, ip, providerID str
 				"diskSelector": map[string]string{"match": "system_disk"}, "minSize": "1GiB", "grow": true,
 			}},
 		)
+		if b.DataDiskVolumeName != "" {
+			// The Talos image sits on one disk; claim the free space of the first other disk.
+			docs = append(docs, map[string]any{"apiVersion": "v1alpha1", "kind": "UserVolumeConfig", "name": b.DataDiskVolumeName, "volumeType": "partition", "provisioning": map[string]any{
+				"diskSelector": map[string]string{"match": DataDiskSelector}, "minSize": "1GiB", "grow": true,
+			}})
+		}
 	}
 	var patch []string
 	for _, d := range docs {

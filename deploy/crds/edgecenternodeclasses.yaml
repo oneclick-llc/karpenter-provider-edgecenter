@@ -84,6 +84,11 @@ spec:
                     maxLength: 34
                     pattern: '^[a-z][a-z0-9-]{0,33}$'
                     description: User volume at /var/mnt/<name> that consumes the remaining system disk space.
+                  dataDiskVolumeName:
+                    type: string
+                    maxLength: 34
+                    pattern: '^[a-z][a-z0-9-]{0,33}$'
+                    description: Optional user volume at /var/mnt/<name> that takes the whole first non-system disk larger than 100 GiB.
                 required:
                 - ephemeralSizeGiB
                 - localVolumeName
@@ -166,6 +171,9 @@ spec:
               message: bareMetalStorage requires computeType BareMetal.
             - rule: '!has(self.bareMetalStorage) || self.bareMetalStorage.ephemeralSizeGiB <= self.bootSizeGiB - 5'
               message: Leave at least 5 GiB for system partitions and local data.
+            - rule: '!has(self.bareMetalStorage) || !has(self.bareMetalStorage.dataDiskVolumeName)
+                || self.bareMetalStorage.dataDiskVolumeName != self.bareMetalStorage.localVolumeName'
+              message: dataDiskVolumeName must differ from localVolumeName.
             - rule: self.addresses.end >= self.addresses.start
               message: The slot range must not be empty.
             - rule: self.addresses.end - self.addresses.start <= 255

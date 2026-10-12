@@ -138,6 +138,25 @@ The user volume consumes the remaining space on the same disk and mounts at `/va
 Talos creates both partitions from the initial machine configuration.
 The controller excludes the user volume from its estimate of Kubernetes `ephemeral-storage`.
 
+EdgeCenter writes the Talos image to one disk, and Talos leaves any second disk untouched.
+Set the optional `dataDiskVolumeName` to give that disk a user volume too:
+
+```yaml
+  bareMetalStorage:
+    ephemeralSizeGiB: 64
+    localVolumeName: local-data
+    dataDiskVolumeName: local-data2
+```
+
+The volume uses the first non-system disk larger than 100 GiB and mounts at `/var/mnt/<dataDiskVolumeName>`.
+Its name must differ from `localVolumeName`.
+Use it for flavors with two disks; the EdgeCenter flavor API lists `bm1-infrastructure-small` as 2x 960GB SSD.
+
+Talos does not wipe disks. On a blank disk the volume takes the whole disk.
+If a partition labelled `u-<dataDiskVolumeName>` already exists, Talos mounts it with its data, and on a disk with other partitions the volume gets only the free space.
+If no disk matches, the node still joins without the volume.
+Check each new node with `talosctl get volumestatus u-<dataDiskVolumeName>` before storing data there.
+
 `bootSizeGiB` remains the capacity estimate for the entire boot disk.
 The configuration must leave at least 5 GiB for service partitions and the user volume.
 The disk must also contain enough free space for the requested layout.
