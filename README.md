@@ -156,6 +156,21 @@ kubectl --context "$KUBE_CONTEXT" -n karpenter-smoke exec deployment/capacity-sm
 After the workload stops, check that Karpenter deletes the node and its cloud resources.
 Check the fixed replica count separately with the static example.
 
+### Live bare metal result
+
+On October 12, 2026, the provider completed a bare metal smoke test in EdgeCenter Moscow.
+A pending pod triggered one `bm1-hf-medium` server through Karpenter.
+The NodeClaim became Ready in 11 minutes 36 seconds with Talos 1.14.2.
+The node configured its bond interface automatically and established all 42 KubeSpan peers.
+DNS, Service HTTP, and direct pod traffic passed in both directions across three regions.
+Six 1 MiB transfers passed SHA-256 checks.
+
+After the workload scaled to zero, Karpenter deleted the empty server.
+The cloud deletion task completed in 3 minutes 52 seconds.
+The server, reserved port, Node, NodeClaim, and launch journal disappeared.
+All 42 original nodes retained their UIDs and remained Ready.
+This smoke did not cover persistent volumes, disk failure, or sustained load.
+
 ## Operational boundaries
 
 - The flavor catalog and prices are explicit configuration. The provider does not import billing prices or GPU resources.
