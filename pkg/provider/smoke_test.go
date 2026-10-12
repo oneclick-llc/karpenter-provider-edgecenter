@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -23,12 +24,23 @@ import (
 )
 
 func TestLifecycleSmoke(t *testing.T) {
+	for _, mode := range []string{"SSHGateway", "UserData"} {
+		t.Run(mode, func(t *testing.T) { lifecycleSmoke(t, mode) })
+	}
+}
+
+func lifecycleSmoke(t *testing.T, mode string) {
 	ctx := context.Background()
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
 	scheme.AddKnownTypes(schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}, &v1.NodeClaim{}, &v1.NodeClaimList{}, &v1.NodePool{}, &v1.NodePoolList{})
 	_ = api.AddToScheme(scheme)
 	spec := api.EdgeCenterNodeClassSpec{ClusterID: "test", ProjectID: 1, RegionID: 10, Region: "moscow", NetworkID: "network", ImageID: "image", SecurityGroupIDs: []string{"sg"}, Flavors: []api.Flavor{{Name: "small", CPU: 4, MemoryGiB: 16, Price: 1}}, BootSizeGiB: 64, BootType: "standard", Addresses: api.AddressPool{CIDR: "10.64.0.0/18", HostOffset: 266, Start: 16, End: 17, KubeSpanPortBase: 52110}, Gateways: []api.Gateway{{Address: "gateway", User: "ops", PublicIP: "192.0.2.1"}}, Credentials: api.SecretRef{Name: "cloud"}, Talos: api.SecretRef{Name: "talos"}, SSH: api.SecretRef{Name: "ssh"}}
+	spec.BootstrapMode = mode
+	if mode == "UserData" {
+		spec.TalosEndpoints = []string{"192.0.2.10:50000"}
+		spec.SSH = api.SecretRef{}
+	}
 	klass := &api.EdgeCenterNodeClass{ObjectMeta: metav1.ObjectMeta{Name: "test", UID: "class-1"}, Spec: spec}
 	secrets := []*corev1.Secret{{ObjectMeta: metav1.ObjectMeta{Name: "cloud", Namespace: "test"}, Data: map[string][]byte{"token": []byte("test")}}, {ObjectMeta: metav1.ObjectMeta{Name: "talos", Namespace: "test"}, Data: map[string][]byte{"worker.yaml": []byte("version: v1alpha1\nmachine:\n  type: worker\n"), "talosconfig": []byte("unused")}}, {ObjectMeta: metav1.ObjectMeta{Name: "ssh", Namespace: "test"}}}
 	kube := fake.NewClientBuilder().WithScheme(scheme).WithObjects(klass, secrets[0], secrets[1], secrets[2]).Build()
@@ -45,6 +57,13 @@ func TestLifecycleSmoke(t *testing.T) {
 			posts++
 			reply(map[string]any{"tasks": []string{"port-task"}})
 		case r.Method == "POST" && r.URL.Path == "/v2/instances/1/10":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil { t.Error(err) }
+			if mode == "UserData" {
+				encoded, _ := body["user_data"].(string)
+				decoded, err := base64.StdEncoding.DecodeString(encoded)
+				if err != nil || !strings.Contains(string(decoded), "edgecenter://1/10/claim-1") || !strings.Contains(string(decoded), "karpenter.sh/unregistered") { t.Error("user data lacks the stable provider ID or registration taint") }
+			} else if _, ok := body["user_data"]; ok { t.Error("SSHGateway unexpectedly sent user data") }
 			vm = true
 			volume = true
 			posts++
@@ -110,6 +129,7 @@ func TestLifecycleSmoke(t *testing.T) {
 			c.URL = server.URL
 			return c
 		}
+		p.Probe = func(context.Context, []string, []byte, string) error { return nil }
 		p.Bootstrap = func(context.Context, api.EdgeCenterNodeClassSpec, bootstrap.Secrets, string, []byte) error {
 			return nil
 		}
@@ -129,7 +149,11 @@ func TestLifecycleSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created.Status.ProviderID != "edgecenter://1/10/vm" {
+	expectedID := "edgecenter://1/10/vm"
+	if mode == "UserData" {
+		expectedID = "edgecenter://1/10/claim-1"
+	}
+	if created.Status.ProviderID != expectedID {
 		t.Fatal(created.Status.ProviderID)
 	}
 	if _, err = p.Create(ctx, nc); err != nil {

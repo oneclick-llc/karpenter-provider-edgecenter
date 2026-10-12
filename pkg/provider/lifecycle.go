@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 
@@ -121,6 +122,17 @@ func (p *Provider) Create(ctx context.Context, nc *v1.NodeClaim) (*v1.NodeClaim,
 			if r.Spec.ServerGroupID != "" {
 				body["servergroup_id"] = r.Spec.ServerGroupID
 			}
+			if r.Spec.BootstrapMode == "UserData" {
+				ts, err := p.secret(ctx, r.Spec.Talos.Name)
+				if err != nil {
+					return nil, err
+				}
+				config, err := bootstrap.Render(ts["worker.yaml"], r.Spec, r.NodeName, r.IP, r.ProviderID, r.Slot, r.Labels, r.Taints, r.StartupTaints)
+				if err != nil {
+					return nil, err
+				}
+				body["user_data"] = base64.StdEncoding.EncodeToString(config)
+			}
 			r.Intent = "create-instance"
 			if err = p.save(ctx, cm, r); err != nil {
 				return nil, err
@@ -185,17 +197,23 @@ func (p *Provider) Create(ctx context.Context, nc *v1.NodeClaim) (*v1.NodeClaim,
 		if err != nil {
 			return nil, err
 		}
-		ss, err := p.secret(ctx, r.Spec.SSH.Name)
-		if err != nil {
-			return nil, err
-		}
-		secrets := bootstrap.Secrets{Worker: ts["worker.yaml"], Config: ts["talosconfig"], SSHKey: ss["ssh-privatekey"], KnownHosts: ss["known_hosts"]}
-		config, err := bootstrap.Render(secrets.Worker, r.Spec, r.NodeName, r.IP, hydrate(r).Status.ProviderID, r.Slot, r.Labels, r.Taints, r.StartupTaints)
-		if err != nil {
-			return nil, err
-		}
-		if err = p.Bootstrap(ctx, r.Spec, secrets, r.IP, config); err != nil {
-			return nil, err
+		if r.Spec.BootstrapMode == "UserData" {
+			if err = p.Probe(ctx, r.Spec.TalosEndpoints, ts["talosconfig"], r.IP); err != nil {
+				return nil, fmt.Errorf("waiting for Talos mTLS through control plane: %w", err)
+			}
+		} else {
+			ss, err := p.secret(ctx, r.Spec.SSH.Name)
+			if err != nil {
+				return nil, err
+			}
+			secrets := bootstrap.Secrets{Worker: ts["worker.yaml"], Config: ts["talosconfig"], SSHKey: ss["ssh-privatekey"], KnownHosts: ss["known_hosts"]}
+			config, err := bootstrap.Render(secrets.Worker, r.Spec, r.NodeName, r.IP, hydrate(r).Status.ProviderID, r.Slot, r.Labels, r.Taints, r.StartupTaints)
+			if err != nil {
+				return nil, err
+			}
+			if err = p.Bootstrap(ctx, r.Spec, secrets, r.IP, config); err != nil {
+				return nil, err
+			}
 		}
 		r.Configured = true
 		if err = p.save(ctx, cm, r); err != nil {

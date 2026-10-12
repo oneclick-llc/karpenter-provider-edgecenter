@@ -34,6 +34,9 @@ func (r *classReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 			name string
 			keys []string
 		}{{n.Spec.Credentials.Name, []string{"token"}}, {n.Spec.Talos.Name, []string{"worker.yaml", "talosconfig"}}, {n.Spec.SSH.Name, []string{"ssh-privatekey", "known_hosts"}}} {
+			if ref.name == n.Spec.SSH.Name && n.Spec.BootstrapMode == "UserData" {
+				continue
+			}
 			data, e := r.p.secret(ctx, ref.name)
 			if e != nil {
 				err = e

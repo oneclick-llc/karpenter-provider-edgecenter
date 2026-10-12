@@ -23,6 +23,24 @@ import (
 
 type Secrets struct{ Worker, Config, SSHKey, KnownHosts []byte }
 
+// Probe uses the public control-plane endpoint as an authenticated Talos proxy.
+// It does not expose or connect to the worker's maintenance API.
+func Probe(ctx context.Context, endpoints []string, config []byte, node string) error {
+	cfg, err := talosconfig.FromBytes(config)
+	if err != nil {
+		return err
+	}
+	c, err := talos.New(ctx, talos.WithConfig(cfg), talos.WithEndpoints(endpoints...))
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	_, err = c.Version(talos.WithNodes(ctx, node))
+	return err
+}
+
 func Render(base []byte, s api.EdgeCenterNodeClassSpec, name, ip, providerID string, slot int, labels map[string]string, taints []corev1.Taint, startup []corev1.Taint) ([]byte, error) {
 	endpoints := []string{}
 	for _, g := range s.Gateways {

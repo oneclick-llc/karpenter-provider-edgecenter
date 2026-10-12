@@ -107,8 +107,6 @@ spec:
                     user: *id001
                     publicIP: *id001
                   required:
-                  - address
-                  - user
                   - publicIP
               credentials: &id003
                 type: object
@@ -118,6 +116,17 @@ spec:
                 - name
               talos: *id003
               ssh: *id003
+              bootstrapMode:
+                type: string
+                enum:
+                - UserData
+                - SSHGateway
+              talosEndpoints:
+                type: array
+                minItems: 1
+                items:
+                  type: string
+                  minLength: 1
             required:
             - clusterID
             - projectID
@@ -133,12 +142,17 @@ spec:
             - gateways
             - credentials
             - talos
-            - ssh
             x-kubernetes-validations:
             - rule: self.addresses.end >= self.addresses.start
               message: The slot range must not be empty.
             - rule: self.addresses.end - self.addresses.start <= 255
               message: A NodeClass can have at most 256 slots.
+            - rule: '!has(self.bootstrapMode) || self.bootstrapMode != ''UserData''
+                || has(self.talosEndpoints)'
+              message: UserData requires public Talos endpoints.
+            - rule: (has(self.bootstrapMode) && self.bootstrapMode == 'UserData')
+                || has(self.ssh)
+              message: SSHGateway requires an SSH secret.
           status:
             type: object
             x-kubernetes-preserve-unknown-fields: true

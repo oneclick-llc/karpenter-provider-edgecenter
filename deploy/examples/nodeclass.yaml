@@ -25,15 +25,12 @@ spec:
     end: 17
     kubeSpanPortBase: 52110
   gateways:
-  - address: 192.0.2.10:22
-    user: ops
-    publicIP: 192.0.2.10
-  - address: 192.0.2.11:22
-    user: ops
-    publicIP: 192.0.2.11
+  - publicIP: 192.0.2.10
+  - publicIP: 192.0.2.11
   credentials:
     name: edgecenter-api
   talos:
     name: talos-worker
-  ssh:
-    name: talos-gateway
+  bootstrapMode: UserData
+  talosEndpoints:
+  - 192.0.2.20:50000

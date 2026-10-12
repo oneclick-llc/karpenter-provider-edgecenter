@@ -39,10 +39,16 @@ A background controller cleans up journals without a NodeClaim. It stops if a co
 
 ## Talos configuration
 
-Each new VM starts from a clean OpenStack Talos image without machine configuration in user data.
-The provider connects through a regional SSH gateway and sends the worker configuration to the private Talos API.
-The SSH connection requires a pinned Ed25519 gateway host key.
-The provider uses the authenticated Talos API to detect a completed configuration request after a restart.
+The recommended `UserData` mode sends the initial worker configuration through the OpenStack config drive.
+The worker starts with the existing cluster identity and a stable provider ID derived from the NodeClaim UID.
+The launch journal maps that provider ID to the EdgeCenter VM UUID.
+
+The provider reads the worker's Talos version through public control-plane endpoints with mTLS.
+The load balancer passes TCP through. Talos verifies the client certificate and proxies the request to the worker.
+The worker maintenance API does not need public access.
+
+`SSHGateway` remains available for clusters without the public mTLS path.
+This mode requires a pinned Ed25519 gateway host key and TCP forwarding to the worker's private Talos API.
 
 The worker base must use the existing cluster identity and enable the required network configuration.
 The provider supplies the hostname, provider ID, node labels, taints, private IP, and KubeSpan endpoints.
@@ -74,10 +80,10 @@ Terraform and Karpenter must use separate slot ranges.
    |---|---|
    | `edgecenter-api` | `token` |
    | `talos-worker` | `worker.yaml`, `talosconfig` |
-   | `talos-gateway` | `ssh-privatekey`, `known_hosts` |
+   | `talos-gateway` (SSHGateway only) | `ssh-privatekey`, `known_hosts` |
 
    `talosconfig` needs permission to read the Talos version. An `os:reader` credential is sufficient.
-   The SSH key needs TCP forwarding to private port `50000`. It does not need shell access.
+   In SSHGateway mode, the SSH key needs TCP forwarding to private port `50000`. It does not need shell access.
    Secret references always resolve within the operator namespace.
 
 4. Set `EC_CLUSTER_ID` in `deploy/controller/resources.yaml`.
@@ -122,6 +128,7 @@ The sample workload requests a new node through its node selector.
 If Cilium installs a startup taint, include that taint in `NodePool.spec.template.spec.startupTaints`.
 
 ```sh
+kubectl --context "$KUBE_CONTEXT" create namespace karpenter-smoke
 kubectl --context "$KUBE_CONTEXT" apply -f deploy/examples/workload.yaml
 kubectl --context "$KUBE_CONTEXT" -n karpenter-smoke rollout status deployment/capacity-smoke --timeout=15m
 kubectl --context "$KUBE_CONTEXT" -n karpenter-smoke exec deployment/capacity-smoke -- nslookup kubernetes.default.svc.cluster.local

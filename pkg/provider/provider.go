@@ -34,11 +34,12 @@ type Provider struct {
 	Namespace, ClusterID string
 	mu                   sync.Mutex
 	Bootstrap            func(context.Context, api.EdgeCenterNodeClassSpec, bootstrap.Secrets, string, []byte) error
+	Probe                func(context.Context, []string, []byte, string) error
 	Cloud                func(string, int, int) *ec.Client
 }
 
 func New(c client.Client, namespace, cluster string) *Provider {
-	return &Provider{Client: c, Namespace: namespace, ClusterID: cluster, Bootstrap: bootstrap.Apply, Cloud: ec.New}
+	return &Provider{Client: c, Namespace: namespace, ClusterID: cluster, Bootstrap: bootstrap.Apply, Probe: bootstrap.Probe, Cloud: ec.New}
 }
 func (*Provider) Name() string { return "edgecenter" }
 func (*Provider) GetSupportedNodeClasses() []status.Object {
@@ -94,6 +95,7 @@ type Launch struct {
 	Taints                                           []corev1.Taint
 	StartupTaints                                    []corev1.Taint
 	PortID, InstanceID                               string
+	ProviderID                                       string
 	VolumeIDs                                        []string
 	// Intent is written before a cloud mutation. Task is written after its response.
 	Intent, Task string
@@ -188,6 +190,9 @@ func (p *Provider) allocate(ctx context.Context, nc *v1.NodeClaim) (*corev1.Conf
 			labels[k] = v
 		}
 		r := &Launch{Claim: nc.Name, UID: string(nc.UID), Class: n.Name, ClassUID: string(n.UID), ClassHash: hash(n.Spec), NodeName: "ec-" + nc.Name, Spec: n.Spec, Flavor: *selected, Slot: slot, IP: ip, Labels: labels, Taints: append([]corev1.Taint{}, nc.Spec.Taints...), StartupTaints: append([]corev1.Taint{}, nc.Spec.StartupTaints...)}
+		if n.Spec.BootstrapMode == "UserData" {
+			r.ProviderID = fmt.Sprintf("edgecenter://%d/%d/%s", n.Spec.ProjectID, n.Spec.RegionID, nc.UID)
+		}
 		if len(r.NodeName) > 63 {
 			return nil, nil, fmt.Errorf("NodeClaim name is too long")
 		}
@@ -204,7 +209,11 @@ func (p *Provider) allocate(ctx context.Context, nc *v1.NodeClaim) (*corev1.Conf
 }
 func hydrate(r *Launch) *v1.NodeClaim {
 	it := instanceType(r.Spec, r.Flavor)
-	return &v1.NodeClaim{ObjectMeta: metav1.ObjectMeta{Name: r.Claim, UID: types.UID(r.UID), Labels: r.Labels, Annotations: map[string]string{hashAnnotation: r.ClassHash}}, Spec: v1.NodeClaimSpec{NodeClassRef: &v1.NodeClassReference{Group: api.Group, Kind: "EdgeCenterNodeClass", Name: r.Class}}, Status: v1.NodeClaimStatus{ProviderID: fmt.Sprintf("edgecenter://%d/%d/%s", r.Spec.ProjectID, r.Spec.RegionID, r.InstanceID), ImageID: r.Spec.ImageID, Capacity: it.Capacity, Allocatable: it.Allocatable()}}
+	id := r.ProviderID
+	if id == "" {
+		id = fmt.Sprintf("edgecenter://%d/%d/%s", r.Spec.ProjectID, r.Spec.RegionID, r.InstanceID)
+	}
+	return &v1.NodeClaim{ObjectMeta: metav1.ObjectMeta{Name: r.Claim, UID: types.UID(r.UID), Labels: r.Labels, Annotations: map[string]string{hashAnnotation: r.ClassHash}}, Spec: v1.NodeClaimSpec{NodeClassRef: &v1.NodeClassReference{Group: api.Group, Kind: "EdgeCenterNodeClass", Name: r.Class}}, Status: v1.NodeClaimStatus{ProviderID: id, ImageID: r.Spec.ImageID, Capacity: it.Capacity, Allocatable: it.Allocatable()}}
 }
 func (p *Provider) find(ctx context.Context, id string) (*corev1.ConfigMap, *Launch, error) {
 	records, err := p.records(ctx)

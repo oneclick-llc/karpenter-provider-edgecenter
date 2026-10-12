@@ -39,6 +39,10 @@ type Gateway struct {
 	PublicIP string `json:"publicIP"`
 }
 type EdgeCenterNodeClassSpec struct {
+	// UserData uses the OpenStack config drive and public Talos mTLS endpoints.
+	// Empty preserves the original SSHGateway transport.
+	BootstrapMode    string      `json:"bootstrapMode,omitempty"`
+	TalosEndpoints   []string    `json:"talosEndpoints,omitempty"`
 	ClusterID        string      `json:"clusterID"`
 	ProjectID        int         `json:"projectID"`
 	RegionID         int         `json:"regionID"`
@@ -55,7 +59,7 @@ type EdgeCenterNodeClassSpec struct {
 	// All secret references use the operator namespace.
 	Credentials SecretRef `json:"credentials"`
 	Talos       SecretRef `json:"talos"`
-	SSH         SecretRef `json:"ssh"`
+	SSH         SecretRef `json:"ssh,omitempty"`
 }
 type EdgeCenterNodeClassStatus struct {
 	Conditions []status.Condition `json:"conditions,omitempty"`
@@ -141,7 +145,13 @@ func (s EdgeCenterNodeClassSpec) Validate() error {
 			return fmt.Errorf("each flavor requires a name, resources and a positive price")
 		}
 	}
-	if s.Credentials.Name == "" || s.Talos.Name == "" || s.SSH.Name == "" {
+	if s.BootstrapMode != "" && s.BootstrapMode != "SSHGateway" && s.BootstrapMode != "UserData" {
+		return fmt.Errorf("bootstrapMode must be UserData or SSHGateway")
+	}
+	if s.BootstrapMode == "UserData" && len(s.TalosEndpoints) == 0 {
+		return fmt.Errorf("UserData requires public Talos endpoints")
+	}
+	if s.Credentials.Name == "" || s.Talos.Name == "" || (s.BootstrapMode != "UserData" && s.SSH.Name == "") {
 		return fmt.Errorf("secret references are required")
 	}
 	return nil
