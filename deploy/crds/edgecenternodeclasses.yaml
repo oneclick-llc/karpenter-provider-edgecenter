@@ -60,6 +60,9 @@ spec:
                     memoryGiB:
                       type: integer
                       minimum: 1
+                    gpu:
+                      type: integer
+                      minimum: 0
                     price:
                       type: number
                       minimum: 1.0e-06
@@ -136,6 +139,11 @@ spec:
                 required:
                 - name
               talos: *id003
+              talosPatches:
+                type: array
+                items:
+                  type: string
+                  minLength: 1
               ssh: *id003
               bootstrapMode:
                 type: string

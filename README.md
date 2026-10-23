@@ -178,6 +178,24 @@ The controller enables Karpenter's `StaticCapacity` feature gate.
 Static pools create new provider-owned nodes. They do not adopt existing Terraform nodes.
 Karpenter does not permit removal of `spec.replicas` after a pool enters static mode.
 
+## GPU pools
+
+Set `gpu` on a flavor to the number of GPUs in that flavor.
+The instance type then advertises `nvidia.com/gpu`, and Karpenter can place pods that request GPUs.
+The device plugin on the node registers the same resource. Karpenter marks the node initialized only after that registration.
+
+`talosPatches` adds Talos config patches to the worker base of one NodeClass.
+Use them for the NVIDIA kernel modules and for the installer image that contains the GPU extensions.
+The provider applies these patches before the per-node documents, so the node identity always stays correct.
+An invalid patch makes the NodeClass not ready.
+
+The image of a GPU NodeClass must contain the NVIDIA system extensions. Talos loads the modules only when a patch lists them.
+
+If the cloud task of a launch fails, for example when no GPU host is free, the provider reports insufficient capacity.
+Karpenter then deletes the NodeClaim, the provider frees the slot, and Karpenter tries another offering.
+
+Unset `gpu` and `talosPatches` fields do not change the hash of existing NodeClasses. Existing nodes do not drift.
+
 ## Smoke tests
 
 Run the local lifecycle smoke:
