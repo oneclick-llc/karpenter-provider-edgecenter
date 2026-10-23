@@ -8,6 +8,7 @@ import (
 	"regexp"
 
 	"github.com/awslabs/operatorpkg/status"
+	"github.com/siderolabs/talos/pkg/machinery/config/configpatcher"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -24,6 +25,7 @@ type Flavor struct {
 	Name      string `json:"name"`
 	CPU       int64  `json:"cpu"`
 	MemoryGiB int64  `json:"memoryGiB"`
+	GPU       int64  `json:"gpu,omitempty"`
 	// Price is the hourly price in one currency shared by all NodeClasses.
 	Price float64 `json:"price"`
 }
@@ -70,9 +72,10 @@ type EdgeCenterNodeClassSpec struct {
 	Addresses        AddressPool       `json:"addresses"`
 	Gateways         []Gateway         `json:"gateways"`
 	// All secret references use the operator namespace.
-	Credentials SecretRef `json:"credentials"`
-	Talos       SecretRef `json:"talos"`
-	SSH         SecretRef `json:"ssh,omitempty"`
+	Credentials  SecretRef `json:"credentials"`
+	Talos        SecretRef `json:"talos"`
+	TalosPatches []string  `json:"talosPatches,omitempty"`
+	SSH          SecretRef `json:"ssh,omitempty"`
 }
 type EdgeCenterNodeClassStatus struct {
 	Conditions []status.Condition `json:"conditions,omitempty"`
@@ -177,8 +180,13 @@ func (s EdgeCenterNodeClassSpec) Validate() error {
 		return fmt.Errorf("flavors, gateways, security groups and boot disk are required")
 	}
 	for _, f := range s.Flavors {
-		if f.Name == "" || f.CPU < 1 || f.MemoryGiB < 1 || f.Price <= 0 {
+		if f.Name == "" || f.CPU < 1 || f.MemoryGiB < 1 || f.GPU < 0 || f.Price <= 0 {
 			return fmt.Errorf("each flavor requires a name, resources and a positive price")
+		}
+	}
+	for i, patch := range s.TalosPatches {
+		if _, err := configpatcher.LoadPatch([]byte(patch)); err != nil {
+			return fmt.Errorf("talosPatches[%d] is not a valid Talos config patch: %w", i, err)
 		}
 	}
 	if s.BootstrapMode != "" && s.BootstrapMode != "SSHGateway" && s.BootstrapMode != "UserData" {

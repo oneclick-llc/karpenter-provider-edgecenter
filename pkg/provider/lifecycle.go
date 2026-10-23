@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/oneclick-llc/karpenter-provider-edgecenter/pkg/bootstrap"
@@ -81,10 +82,14 @@ func (p *Provider) Create(ctx context.Context, nc *v1.NodeClaim) (*v1.NodeClaim,
 		return nil, err
 	}
 	if err = p.finishTask(ctx, c, cm, r); err != nil {
+		var failed *failedTask
+		if errors.As(err, &failed) {
+			return nil, cp.NewInsufficientCapacityError(err)
+		}
 		return nil, err
 	}
 	if r.Failure != "" {
-		return nil, fmt.Errorf("%s", r.Failure)
+		return nil, cp.NewInsufficientCapacityError(fmt.Errorf("%s", r.Failure))
 	}
 	if r.PortID == "" {
 		if r.Intent != "" {

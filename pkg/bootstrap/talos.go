@@ -90,11 +90,19 @@ func Render(base []byte, s api.EdgeCenterNodeClassSpec, name, ip, providerID str
 		}
 		patch = append(patch, string(b))
 	}
+	patches := make([]configpatcher.Patch, 0, len(s.TalosPatches)+1)
+	for _, raw := range s.TalosPatches {
+		p, err := configpatcher.LoadPatch([]byte(raw))
+		if err != nil {
+			return nil, err
+		}
+		patches = append(patches, p)
+	}
 	p, err := configpatcher.LoadPatch([]byte(strings.Join(patch, "\n---\n")))
 	if err != nil {
 		return nil, err
 	}
-	out, err := configpatcher.Apply(configpatcher.WithBytes(base), []configpatcher.Patch{p})
+	out, err := configpatcher.Apply(configpatcher.WithBytes(base), append(patches, p))
 	if err != nil {
 		return nil, err
 	}
